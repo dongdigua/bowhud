@@ -5,6 +5,8 @@ use arrow::Arrow;
 use gtk4 as gtk;
 use gtk::prelude::*;
 use gtk::{DrawingArea};
+use gtk::gdk::{self, prelude::*};
+use gtk4_layer_shell::{Edge, Layer, LayerShell, KeyboardMode};
 
 use std::collections::HashMap;
 
@@ -49,10 +51,32 @@ fn main() {
 }
 
 fn build_ui(application: &gtk::Application, data: HashMap<i32, (f64, CrosshairData)>) {
-    let window = gtk::ApplicationWindow::new(application);
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(".background{background-color: transparent;}");
+    gtk::style_context_add_provider_for_display(
+        &gdk::Display::default().expect("Could not connect to a display."),
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 
-    window.set_title(Some("First GTK Program"));
-    window.set_default_size(PIXEL, PIXEL);
+    let window = gtk::ApplicationWindow::new(application);
+    window.init_layer_shell();
+    window.set_layer(Layer::Overlay);
+    let anchors = [
+        (Edge::Top, true),
+        (Edge::Bottom, true),
+    ];
+    for (anchor, state) in anchors {
+        window.set_anchor(anchor, state);
+    }
+
+    // https://github.com/ErikReider/SwayOSD/blob/ce1f34d80a7f8b4393a5551ea0535bd8beabb28c/src/server/osd_window.rs#L60
+    window.connect_map(|window| {
+		if let Some(surface) = window.surface() {
+			let region = gtk::cairo::Region::create();
+			surface.set_input_region(&region);
+		}
+	});
 
     let overlay = DrawingArea::builder()
         .content_width(PIXEL)
@@ -60,21 +84,22 @@ fn build_ui(application: &gtk::Application, data: HashMap<i32, (f64, CrosshairDa
         .build();
 
     overlay.set_draw_func(move |_area, ctx, width, height| {
-        ctx.set_source_rgba(1.0, 0.0, 0.0, 0.5);
+        ctx.set_source_rgba(0.0, 0.0, 1.0, 0.5);
         ctx.set_line_width(1.0);
 
         let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
-        
+
         for (_, (_, v)) in data.iter() {
             ctx.move_to(cx - v.w/2.0, cy - v.h);
             ctx.line_to(cx + v.w/2.0, cy - v.h);
+            ctx.move_to(cx, cy);
+            ctx.line_to(cx, cy - v.h);
         }
 
         ctx.stroke().unwrap();
     });
 
     window.set_child(Some(&overlay));
-
     window.present();
 }
 
