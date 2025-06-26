@@ -1,3 +1,5 @@
+#![feature(mpmc_channel)]
+
 mod arrow;
 mod vec3;
 
@@ -5,9 +7,12 @@ use arrow::Arrow;
 use gtk4 as gtk;
 use gtk::prelude::*;
 use gtk::{DrawingArea, gdk};
+use gtk::glib::{self, clone, WeakRef, ControlFlow};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
+use std::io::Write;
 use std::collections::HashMap;
+use std::sync::mpmc::{sync_channel, Receiver};
 
 // net/minecraft/client/network/AbstractClientPlayerEntity.java
 const FOV: f64 = 100.0 * FOV_EFFECT_SCALE;
@@ -21,36 +26,54 @@ struct CrosshairData {
 }
 
 fn main() {
-    let mut arrow = Arrow::new(1.0,0.0,0.0, 3.0);
-    let mut res = HashMap::new();
-    for _ in 0..20 { // outside 1s will have no accuracy at all
-        arrow.tick();
-        let (x, y) = (arrow.pos.x, arrow.pos.y);
-        let h = block2screen(FOV, PIXEL as f64, x, y);
-        let w = block2screen(FOV, PIXEL as f64, x, 1.0);
+    let (tx0, rx0) = sync_channel(1);
+    let (tx1, rx1) = sync_channel(1); // 天才
 
-        let dec = ((x / 10.0).round() as i32) * 10;
-        res.entry(dec)
-            .and_modify(|best: &mut (f64, CrosshairData)| {
-                if (x - dec as f64).abs() < (best.0 - dec as f64).abs() {
-                    *best = (x, CrosshairData { h, w });
+    // tx0.send(HashMap::<i32, (f64, CrosshairData)>::new()).unwrap();
+
+    std::thread::spawn(move || {
+        loop {
+            let mut buffer = String::new();
+            print!("> ");
+            std::io::stdout().flush().unwrap();
+            std::io::stdin().read_line(&mut buffer).unwrap();
+            if let Ok(fov) = buffer.trim().parse::<f64>() {
+                let mut arrow = Arrow::new(1.0,0.0,0.0, 3.0);
+                let mut res = HashMap::new();
+                for _ in 0..20 { // outside 1s will have no accuracy at all
+                    arrow.tick();
+                    let (x, y) = (arrow.pos.x, arrow.pos.y);
+                    let h = block2screen(fov, PIXEL as f64, x, y);
+                    let w = block2screen(fov, PIXEL as f64, x, 1.0);
+
+                    let dec = ((x / 10.0).round() as i32) * 10;
+                    res.entry(dec)
+                        .and_modify(|best: &mut (f64, CrosshairData)| {
+                            if (x - dec as f64).abs() < (best.0 - dec as f64).abs() {
+                                *best = (x, CrosshairData { h, w });
+                            }
+                        })
+                        .or_insert((x, CrosshairData { h, w }));
                 }
-            })
-            .or_insert((x, CrosshairData { h, w }));
-    }
-    res.remove(&0);
-    println!("{:#?}", res);
+                res.remove(&0);
+
+                tx1.send(true).unwrap();
+                tx0.send(res.clone()).unwrap();
+                println!("{:?}", res);
+            }
+        }});
 
     let app = gtk::Application::new(
         Some("com.github.dongdigua.wayhud"),
         Default::default(),
     );
 
-    app.connect_activate(move |app| build_ui(app, res.clone()));
+    app.connect_activate(move |app| build_ui(app, rx0.clone(), rx1.clone()));
     app.run();
+
 }
 
-fn build_ui(application: &gtk::Application, data: HashMap<i32, (f64, CrosshairData)>) {
+fn build_ui(application: &gtk::Application, rx0: Receiver<HashMap<i32, (f64, CrosshairData)>>, rx1: Receiver<bool>) {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(".background{background-color: transparent;}");
     gtk::style_context_add_provider_for_display(
@@ -84,23 +107,34 @@ fn build_ui(application: &gtk::Application, data: HashMap<i32, (f64, CrosshairDa
         .build();
 
     overlay.set_draw_func(move |_area, ctx, width, height| {
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
-        ctx.set_line_width(1.0);
+        if let Ok(data) = rx0.try_recv() {
 
-        let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
+            ctx.set_line_width(1.0);
 
-        for (_, (_, v)) in data.iter() {
-            ctx.move_to(cx - v.w/2.0, cy - v.h);
-            ctx.line_to(cx + v.w/2.0, cy - v.h);
-            ctx.move_to(cx, cy);
-            ctx.line_to(cx, cy - v.h);
+            let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+
+            for (_, (_, v)) in data.iter() {
+                ctx.move_to(cx - v.w/2.0, cy - v.h);
+                ctx.line_to(cx + v.w/2.0, cy - v.h);
+                ctx.move_to(cx, cy);
+                ctx.line_to(cx, cy - v.h);
+            }
+
+            ctx.stroke().unwrap();
         }
-
-        ctx.stroke().unwrap();
     });
 
     window.set_child(Some(&overlay));
     window.present();
+
+    glib::source::timeout_add_local(std::time::Duration::from_millis(500), move || {
+        if let Ok(_) = rx1.try_recv() {
+            eprintln!("recv");
+            overlay.clone().queue_draw();
+        }
+        ControlFlow::Continue
+    });
 }
 
 fn block2screen(fov: f64, screen: f64, depth: f64, block: f64) -> f64 {
