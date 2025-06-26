@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use std::sync::mpmc::{sync_channel, Receiver};
 
 // net/minecraft/client/network/AbstractClientPlayerEntity.java
-const FOV: f64 = 100.0 * FOV_EFFECT_SCALE;
 const FOV_EFFECT_SCALE: f64 = 1.0 - 0.15;
 const PIXEL: i32 = 1080;
 
@@ -29,38 +28,45 @@ fn main() {
     let (tx0, rx0) = sync_channel(1);
     let (tx1, rx1) = sync_channel(1); // 天才
 
-    // tx0.send(HashMap::<i32, (f64, CrosshairData)>::new()).unwrap();
-
     std::thread::spawn(move || {
+        let mut fov: f64 = 70.0;
+        let mut height: f64 = 0.0;
         loop {
+            let mut arrow = Arrow::new(1.0,0.0,0.0, 3.0);
+            let mut res = HashMap::new();
+            for _ in 0..31 { // outside 1s will have no accuracy at all
+                arrow.tick();
+                let (x, y) = (arrow.pos.x, arrow.pos.y);
+                let h = block2screen(fov, PIXEL as f64, x, y + height);
+                let w = block2screen(fov, PIXEL as f64, x, 1.0);
+
+                let dec = ((x / 10.0).round() as i32) * 10;
+                res.entry(dec)
+                    .and_modify(|best: &mut (f64, CrosshairData)| {
+                        if (x - dec as f64).abs() < (best.0 - dec as f64).abs() {
+                            *best = (x, CrosshairData { h, w });
+                        }
+                    })
+                    .or_insert((x, CrosshairData { h, w }));
+            }
+            res.remove(&0);
+            res.remove(&90);
+
+            tx0.send(res.clone()).unwrap();
+
             let mut buffer = String::new();
             print!("> ");
             std::io::stdout().flush().unwrap();
             std::io::stdin().read_line(&mut buffer).unwrap();
-            if let Ok(fov) = buffer.trim().parse::<f64>() {
-                let mut arrow = Arrow::new(1.0,0.0,0.0, 3.0);
-                let mut res = HashMap::new();
-                for _ in 0..20 { // outside 1s will have no accuracy at all
-                    arrow.tick();
-                    let (x, y) = (arrow.pos.x, arrow.pos.y);
-                    let h = block2screen(fov, PIXEL as f64, x, y);
-                    let w = block2screen(fov, PIXEL as f64, x, 1.0);
 
-                    let dec = ((x / 10.0).round() as i32) * 10;
-                    res.entry(dec)
-                        .and_modify(|best: &mut (f64, CrosshairData)| {
-                            if (x - dec as f64).abs() < (best.0 - dec as f64).abs() {
-                                *best = (x, CrosshairData { h, w });
-                            }
-                        })
-                        .or_insert((x, CrosshairData { h, w }));
+            if buffer.starts_with("fov") {
+                if let Ok(ffov) = buffer.strip_prefix("fov").unwrap().trim().parse::<f64>() {
+                    fov = ffov;
                 }
-                res.remove(&0);
-
-                tx1.send(true).unwrap();
-                tx0.send(res.clone()).unwrap();
-                println!("{:?}", res);
+            } else if let Ok(hheight) = buffer.trim().parse::<f64>() {
+                height = hheight;
             }
+            tx1.send(true).unwrap(); // new trajectory, update display
         }});
 
     let app = gtk::Application::new(
@@ -108,7 +114,6 @@ fn build_ui(application: &gtk::Application, rx0: Receiver<HashMap<i32, (f64, Cro
 
     overlay.set_draw_func(move |_area, ctx, width, height| {
         if let Ok(data) = rx0.try_recv() {
-
             ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
             ctx.set_line_width(1.0);
 
@@ -130,7 +135,6 @@ fn build_ui(application: &gtk::Application, rx0: Receiver<HashMap<i32, (f64, Cro
 
     glib::source::timeout_add_local(std::time::Duration::from_millis(500), move || {
         if let Ok(_) = rx1.try_recv() {
-            eprintln!("recv");
             overlay.clone().queue_draw();
         }
         ControlFlow::Continue
