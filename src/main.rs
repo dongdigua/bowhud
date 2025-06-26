@@ -4,13 +4,14 @@ mod vec3;
 use arrow::Arrow;
 use gtk4 as gtk;
 use gtk::prelude::*;
-use gtk::{DrawingArea};
-use gtk::gdk::{self, prelude::*};
-use gtk4_layer_shell::{Edge, Layer, LayerShell, KeyboardMode};
+use gtk::{DrawingArea, gdk};
+use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
 use std::collections::HashMap;
 
-const FOV: f64 = 70.0;
+// net/minecraft/client/network/AbstractClientPlayerEntity.java
+const FOV: f64 = 100.0 * FOV_EFFECT_SCALE;
+const FOV_EFFECT_SCALE: f64 = 1.0 - 0.15;
 const PIXEL: i32 = 1080;
 
 #[derive(Debug, Copy, Clone)]
@@ -22,7 +23,7 @@ struct CrosshairData {
 fn main() {
     let mut arrow = Arrow::new(1.0,0.0,0.0, 3.0);
     let mut res = HashMap::new();
-    for _ in 0..31 { // 1.5s
+    for _ in 0..20 { // outside 1s will have no accuracy at all
         arrow.tick();
         let (x, y) = (arrow.pos.x, arrow.pos.y);
         let h = block2screen(FOV, PIXEL as f64, x, y);
@@ -38,7 +39,6 @@ fn main() {
             .or_insert((x, CrosshairData { h, w }));
     }
     res.remove(&0);
-    res.remove(&10); // 十米之内，又准又快
     println!("{:#?}", res);
 
     let app = gtk::Application::new(
@@ -84,7 +84,7 @@ fn build_ui(application: &gtk::Application, data: HashMap<i32, (f64, CrosshairDa
         .build();
 
     overlay.set_draw_func(move |_area, ctx, width, height| {
-        ctx.set_source_rgba(0.0, 0.0, 1.0, 0.5);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
         ctx.set_line_width(1.0);
 
         let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
