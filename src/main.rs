@@ -7,7 +7,7 @@ use arrow::Arrow;
 use gtk4 as gtk;
 use gtk::prelude::*;
 use gtk::{DrawingArea, gdk};
-use gtk::glib::{self, clone, WeakRef, ControlFlow};
+use gtk::glib::{self, ControlFlow};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
 use std::io::Write;
@@ -16,7 +16,6 @@ use std::sync::mpmc::{sync_channel, Receiver};
 
 // net/minecraft/client/network/AbstractClientPlayerEntity.java
 const FOV_EFFECT_SCALE: f64 = 1.0 - 0.15;
-const PIXEL: i32 = 1080;
 
 #[derive(Debug, Copy, Clone)]
 struct CrosshairData {
@@ -25,20 +24,27 @@ struct CrosshairData {
 }
 
 fn main() {
+    let mut pixel = 1080;
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 2 {
+        pixel = args[1].parse().unwrap();
+    }
+
     let (tx0, rx0) = sync_channel(1);
     let (tx1, rx1) = sync_channel(1); // 天才
 
     std::thread::spawn(move || {
         let mut fov: f64 = 70.0;
         let mut height: f64 = 0.0;
+        let mut speed: f64 = 3.0;
         loop {
-            let mut arrow = Arrow::new(1.0,0.0,0.0, 3.0);
+            let mut arrow = Arrow::new(1.0,0.0,0.0, speed);
             let mut res = HashMap::new();
             for _ in 0..31 { // outside 1s will have no accuracy at all
                 arrow.tick();
                 let (x, y) = (arrow.pos.x, arrow.pos.y);
-                let h = block2screen(fov, PIXEL as f64, x, y + height);
-                let w = block2screen(fov, PIXEL as f64, x, 1.0);
+                let h = block2screen(fov, pixel as f64, x, y);
+                let w = block2screen(fov, pixel as f64, (x*x + height*height).sqrt(), 1.0);
 
                 let dec = ((x / 10.0).round() as i32) * 10;
                 res.entry(dec)
@@ -63,23 +69,37 @@ fn main() {
                 if let Ok(ffov) = buffer.strip_prefix("fov").unwrap().trim().parse::<f64>() {
                     fov = ffov;
                 }
+            } else if buffer.starts_with("@") {
+                if let Some(weapon) = buffer.strip_prefix("@") {
+                    match weapon.trim() {
+                        "bow" => speed = 3.0,
+                        "crossbow" => speed = 3.15,
+                        _ => println!("?"),
+                    }
+                }
             } else if let Ok(hheight) = buffer.trim().parse::<f64>() {
                 height = hheight;
+            } else if buffer == "eff" {
+                fov *= FOV_EFFECT_SCALE;
             }
             tx1.send(true).unwrap(); // new trajectory, update display
         }});
 
     let app = gtk::Application::new(
         Some("com.github.dongdigua.wayhud"),
-        Default::default(),
+        gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE
     );
 
-    app.connect_activate(move |app| build_ui(app, rx0.clone(), rx1.clone()));
+    app.connect_command_line(|app, _cmdline| {
+        // ignore this
+        app.activate();
+        0
+    });
+    app.connect_activate(move |app| build_ui(app, pixel, rx0.clone(), rx1.clone()));
     app.run();
-
 }
 
-fn build_ui(application: &gtk::Application, rx0: Receiver<HashMap<i32, (f64, CrosshairData)>>, rx1: Receiver<bool>) {
+fn build_ui(application: &gtk::Application, pixel: i32, rx0: Receiver<HashMap<i32, (f64, CrosshairData)>>, rx1: Receiver<bool>) {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(".background{background-color: transparent;}");
     gtk::style_context_add_provider_for_display(
@@ -108,8 +128,8 @@ fn build_ui(application: &gtk::Application, rx0: Receiver<HashMap<i32, (f64, Cro
 	});
 
     let overlay = DrawingArea::builder()
-        .content_width(PIXEL)
-        .content_height(PIXEL)
+        .content_width(pixel)
+        .content_height(pixel)
         .build();
 
     overlay.set_draw_func(move |_area, ctx, width, height| {
@@ -122,8 +142,8 @@ fn build_ui(application: &gtk::Application, rx0: Receiver<HashMap<i32, (f64, Cro
             for (_, (_, v)) in data.iter() {
                 ctx.move_to(cx - v.w/2.0, cy - v.h);
                 ctx.line_to(cx + v.w/2.0, cy - v.h);
-                ctx.move_to(cx, cy);
-                ctx.line_to(cx, cy - v.h);
+                // ctx.move_to(cx, cy);
+                // ctx.line_to(cx, cy - v.h);
             }
 
             ctx.stroke().unwrap();
