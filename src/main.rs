@@ -4,10 +4,9 @@ use arrow::Arrow;
 
 use gtk4 as gtk;
 use gtk::prelude::*;
-use gtk::{DrawingArea, gdk};
-use gtk::glib::{self, ControlFlow};
+use gtk::{DrawingArea, gdk, glib};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
-use crossbeam_channel::{bounded, Receiver};
+use async_channel::{bounded, Receiver};
 
 use std::io::Write;
 use std::collections::HashMap;
@@ -56,7 +55,7 @@ fn main() {
             res.remove(&0);
             res.remove(&90);
 
-            tx0.send(res.clone()).unwrap();
+            tx0.send_blocking(res).unwrap();
 
             let mut buffer = String::new();
             print!("> ");
@@ -80,7 +79,7 @@ fn main() {
             } else if buffer == "eff" {
                 fov *= FOV_EFFECT_SCALE;
             }
-            tx1.send(true).unwrap(); // new trajectory, update display
+            tx1.send_blocking(true).unwrap(); // new trajectory, update display
         }});
 
     let app = gtk::Application::new(
@@ -151,11 +150,11 @@ fn build_ui(application: &gtk::Application, pixel: i32, rx0: Receiver<HashMap<i3
     window.set_child(Some(&overlay));
     window.present();
 
-    glib::source::timeout_add_local(std::time::Duration::from_millis(500), move || {
-        if let Ok(_) = rx1.try_recv() {
-            overlay.clone().queue_draw();
+    // https://gtk-rs.org/gtk4-rs/stable/latest/book/main_event_loop.html#channels
+    glib::spawn_future_local(async move {
+        while let Ok(true) = rx1.recv().await {
+            overlay.queue_draw();
         }
-        ControlFlow::Continue
     });
 }
 
