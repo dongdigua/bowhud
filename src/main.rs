@@ -1,18 +1,16 @@
-#![feature(mpmc_channel)]
-
 mod arrow;
 mod vec3;
-
 use arrow::Arrow;
+
 use gtk4 as gtk;
 use gtk::prelude::*;
 use gtk::{DrawingArea, gdk};
 use gtk::glib::{self, ControlFlow};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
+use crossbeam_channel::{bounded, Receiver};
 
 use std::io::Write;
 use std::collections::HashMap;
-use std::sync::mpmc::{sync_channel, Receiver};
 
 // net/minecraft/client/network/AbstractClientPlayerEntity.java
 const FOV_EFFECT_SCALE: f64 = 1.0 - 0.15;
@@ -30,8 +28,8 @@ fn main() {
         pixel = args[1].parse().unwrap();
     }
 
-    let (tx0, rx0) = sync_channel(1);
-    let (tx1, rx1) = sync_channel(1); // 天才
+    let (tx0, rx0) = bounded(1);
+    let (tx1, rx1) = bounded(1); // 天才
 
     std::thread::spawn(move || {
         let mut fov: f64 = 70.0;
