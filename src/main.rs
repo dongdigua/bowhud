@@ -43,10 +43,10 @@ fn main() {
                 let h = block2screen(fov, pixel as f64, x, y);
                 let w = block2screen(fov, pixel as f64, (x*x + height*height).sqrt(), 1.0);
 
-                let dec = ((x / 10.0).round() as i32) * 10;
+                let dec = (x / 10.0).round() as i32;
                 res.entry(dec)
                     .and_modify(|best: &mut (f64, CrosshairData)| {
-                        if (x - dec as f64).abs() < (best.0 - dec as f64).abs() {
+                        if (x - dec as f64  * 10.0).abs() < (best.0 - dec as f64  * 10.0).abs() {
                             *best = (x, CrosshairData { h, w });
                         }
                     })
@@ -136,11 +136,10 @@ fn build_ui(application: &gtk::Application, pixel: i32, rx0: Receiver<HashMap<i3
 
             let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
 
-            for (_, (_, v)) in data.iter() {
+            for (d, (_, v)) in data.iter() {
                 ctx.move_to(cx - v.w/2.0, cy - v.h);
                 ctx.line_to(cx + v.w/2.0, cy - v.h);
-                // ctx.move_to(cx, cy);
-                // ctx.line_to(cx, cy - v.h);
+                ctx.show_text(&d.to_string()).unwrap();
             }
 
             ctx.stroke().unwrap();
