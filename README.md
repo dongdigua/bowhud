@@ -15,3 +15,6 @@
 - `[+-](\d+)` 设置目标高度
 - `eff` 适应弓箭瞄准时的视场角变化
 - `@(bow|crossbow)` 不同弹射物初速度
+
+## Video
+[[MC x Wayland] 给萌新弓箭手的狙击标尺，但是 GTK Layer Shell](https://www.bilibili.com/video/BV1QvgfzfEMu)

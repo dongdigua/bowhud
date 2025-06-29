@@ -20,6 +20,13 @@ struct CrosshairData {
     w: f64
 }
 
+#[derive(Debug, Copy, Clone)]
+struct Hud {
+    fov: f64,
+    height: f64,
+    speed: f64,
+}
+
 fn main() {
     let mut pixel = 1080;
     let args: Vec<String> = std::env::args().collect();
@@ -27,21 +34,23 @@ fn main() {
         pixel = args[1].parse().unwrap();
     }
 
-    let (tx0, rx0) = bounded(1);
-    let (tx1, rx1) = bounded(1); // 天才
+    let (tx_data, rx_data) = bounded(1);
+    let (tx_signal, rx_signal) = bounded(1); // 天才
 
     std::thread::spawn(move || {
-        let mut fov: f64 = 70.0;
-        let mut height: f64 = 0.0;
-        let mut speed: f64 = 3.0;
+        let mut hud = Hud {
+            fov: 70.0,
+            height: 0.0,
+            speed: 3.0
+        };
         loop {
-            let mut arrow = Arrow::new(1.0,0.0,0.0, speed);
+            let mut arrow = Arrow::new(1.0,0.0,0.0, hud.speed);
             let mut res = HashMap::new();
             for _ in 0..31 { // outside 1s will have no accuracy at all
                 arrow.tick();
                 let (x, y) = (arrow.pos.x, arrow.pos.y);
-                let h = block2screen(fov, pixel as f64, x, y);
-                let w = block2screen(fov, pixel as f64, (x*x + height*height).sqrt(), 1.0);
+                let h = block2screen(hud.fov, pixel as f64, x, y);
+                let w = block2screen(hud.fov, pixel as f64, (x*x + hud.height*hud.height).sqrt(), 1.0);
 
                 let dec = (x / 10.0).round() as i32;
                 res.entry(dec)
@@ -55,7 +64,7 @@ fn main() {
             res.remove(&0);
             res.remove(&90);
 
-            tx0.send_blocking(res).unwrap();
+            tx_data.send_blocking(res).unwrap();
 
             let mut buffer = String::new();
             print!("> ");
@@ -63,23 +72,25 @@ fn main() {
             std::io::stdin().read_line(&mut buffer).unwrap();
 
             if buffer.starts_with("fov") {
-                if let Ok(ffov) = buffer.strip_prefix("fov").unwrap().trim().parse::<f64>() {
-                    fov = ffov;
+                if let Ok(fov) = buffer.strip_prefix("fov").unwrap().trim().parse::<f64>() {
+                    hud.fov = fov;
                 }
             } else if buffer.starts_with("@") {
                 if let Some(weapon) = buffer.strip_prefix("@") {
                     match weapon.trim() {
-                        "bow" => speed = 3.0,
-                        "crossbow" => speed = 3.15,
+                        "bow" => hud.speed = 3.0,
+                        "crossbow" => hud.speed = 3.15,
                         _ => println!("?"),
                     }
                 }
-            } else if let Ok(hheight) = buffer.trim().parse::<f64>() {
-                height = hheight;
-            } else if buffer == "eff" {
-                fov *= FOV_EFFECT_SCALE;
+            } else if let Ok(height) = buffer.trim().parse::<f64>() {
+                hud.height = height;
+            } else if buffer.starts_with("eff") {
+                hud.fov *= FOV_EFFECT_SCALE;
+            } else if buffer.starts_with("spyglass") {
+                hud.fov *= 0.1; // 10x zoom
             }
-            tx1.send_blocking(true).unwrap(); // new trajectory, update display
+            tx_signal.send_blocking(true).unwrap(); // new trajectory, update display
         }});
 
     let app = gtk::Application::new(
@@ -92,11 +103,11 @@ fn main() {
         app.activate();
         0
     });
-    app.connect_activate(move |app| build_ui(app, pixel, rx0.clone(), rx1.clone()));
+    app.connect_activate(move |app| build_ui(app, pixel, rx_data.clone(), rx_signal.clone()));
     app.run();
 }
 
-fn build_ui(application: &gtk::Application, pixel: i32, rx0: Receiver<HashMap<i32, (f64, CrosshairData)>>, rx1: Receiver<bool>) {
+fn build_ui(application: &gtk::Application, pixel: i32, rx_data: Receiver<HashMap<i32, (f64, CrosshairData)>>, rx_signal: Receiver<bool>) {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(".background{background-color: transparent;}");
     gtk::style_context_add_provider_for_display(
@@ -130,7 +141,7 @@ fn build_ui(application: &gtk::Application, pixel: i32, rx0: Receiver<HashMap<i3
         .build();
 
     overlay.set_draw_func(move |_area, ctx, width, height| {
-        if let Ok(data) = rx0.try_recv() {
+        if let Ok(data) = rx_data.try_recv() {
             ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
             ctx.set_line_width(1.0);
 
@@ -151,7 +162,7 @@ fn build_ui(application: &gtk::Application, pixel: i32, rx0: Receiver<HashMap<i3
 
     // https://gtk-rs.org/gtk4-rs/stable/latest/book/main_event_loop.html#channels
     glib::spawn_future_local(async move {
-        while let Ok(true) = rx1.recv().await {
+        while let Ok(true) = rx_signal.recv().await {
             overlay.queue_draw();
         }
     });

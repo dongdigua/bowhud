@@ -20,6 +20,6 @@ impl Arrow {
         let lv = self.velocity;
         let pos = self.pos;
         self.pos = pos.add(lv);
-        self.velocity = lv * 0.99 - Vec3::<f64>::new(0.0, 0.05, 0.0);
+        self.velocity = lv * 0.99 - Vec3::new(0.0, 0.05, 0.0);
     }
 }
